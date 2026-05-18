@@ -38,7 +38,7 @@ export default function WeeklyPlan() {
 
   useEffect(() => { init() }, [])
 
-  async function init() {
+async function init() {
   setLoading(true)
   const [{ data: mealData }, { data: planData }, { data: allSlotData }] = await Promise.all([
     supabase.from('meals').select('*'),
@@ -54,10 +54,18 @@ export default function WeeklyPlan() {
   }
   setLoading(false)
 }
-    setLoading(false)
-  }
 
-  a} else {
+  async function generate() {
+    setGenerating(true)
+    const { slots: newSlots, flags: newFlags } = generatePlan(meals)
+
+    // Upsert plan
+    let planId = plan?.id
+    if (!planId) {
+      const { data } = await supabase.from('weekly_plans').insert({ week_starting: mondayStr, status: 'draft' }).select().single()
+      planId = data.id
+      setPlan(data)
+ } else {
   await Promise.all([
     supabase.from('weekly_plans').update({ status: 'draft' }).eq('id', planId),
     supabase.from('plan_slots').delete().eq('plan_id', planId)
@@ -73,7 +81,7 @@ setFlags([...newFlags, ...validateSlots(rows, meals)])
 setGenerating(false)
   }
 
- async function confirm() {
+  async function confirm() {
   if (!confirm('Confirm this plan? Servings will be deducted from your meal library.')) return
   setConfirming(true)
 
