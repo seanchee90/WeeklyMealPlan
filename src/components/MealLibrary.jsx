@@ -21,37 +21,36 @@ export default function MealLibrary() {
     setLoading(false)
   }
 
-  async function save() {
-    if (!form.name.trim()) return
-    setSaving(true)
-    setError(null)
-    if (editId) {
-      const { error } = await supabase.from('meals').update(form).eq('id', editId)
-      if (error) { setError(error.message); setSaving(false); return }
-    } else {
-      const { error } = await supabase.from('meals').insert(form)
-      if (error) { setError(error.message); setSaving(false); return }
-    }
-    setSaving(false)
-    setForm(EMPTY)
-    setEditId(null)
-    setShowForm(false)
-    fetchMeals()
+ async function save() {
+  if (!form.name.trim()) return
+  setSaving(true)
+  setError(null)
+  if (editId) {
+    const { error } = await supabase.from('meals').update(form).eq('id', editId)
+    if (error) { setError(error.message); setSaving(false); return }
+    setMeals(ms => ms.map(m => m.id === editId ? { ...m, ...form } : m))
+  } else {
+    const { data, error } = await supabase.from('meals').insert(form).select().single()
+    if (error) { setError(error.message); setSaving(false); return }
+    setMeals(ms => [...ms, data].sort((a, b) => a.type.localeCompare(b.type) || a.name.localeCompare(b.name)))
   }
+  setSaving(false)
+  setForm(EMPTY)
+  setEditId(null)
+  setShowForm(false)
+}
 
   async function updateServings(id, delta) {
-    const meal = meals.find(m => m.id === id)
-    const next = Math.max(0, meal.servings_available + delta)
-    await supabase.from('meals').update({ servings_available: next }).eq('id', id)
-    fetchMeals()
-  }
+  const meal = meals.find(m => m.id === id)
+  const next = Math.max(0, meal.servings_available + delta)
+  setMeals(ms => ms.map(m => m.id === id ? { ...m, servings_available: next } : m))
+  await supabase.from('meals').update({ servings_available: next }).eq('id', id)
+}
 
-  async function deleteMeal(id) {
-    if (!confirm('Delete this meal?')) return
-    await supabase.from('meals').delete().eq('id', id)
-    fetchMeals()
-  }
-
+ async function deleteMeal(id) {
+  if (!confirm('Delete this meal?')) return
+  setMeals(ms => ms.filter(m => m.id !== id))
+  await supabase.from('meals').delete().eq('id', id)
   function startEdit(meal) {
     setForm({ name: meal.name, type: meal.type, has_protein: meal.has_protein, has_veggie: meal.has_veggie, servings_available: meal.servings_available })
     setEditId(meal.id)
