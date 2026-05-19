@@ -29,6 +29,11 @@ function getTodayName() {
   return new Date().toLocaleDateString('en-AU', { weekday: 'long' })
 }
 
+function isMidWeek() {
+  const day = new Date().getDay() // 0=Sun, 1=Mon, ..., 6=Sat
+  return day !== 1 // not Monday
+}
+
 export default function WeeklyPlan() {
   const [meals, setMeals] = useState([])
   const [plan, setPlan] = useState(null)
@@ -40,6 +45,8 @@ export default function WeeklyPlan() {
   const [editing, setEditing] = useState(null)
   const mondayStr = getMondayStr()
   const todayName = getTodayName()
+  const todayIndex = DAYS.indexOf(todayName)
+  const midWeek = isMidWeek()
 
   useEffect(() => { init() }, [])
 
@@ -84,8 +91,8 @@ export default function WeeklyPlan() {
     setGenerating(false)
   }
 
-  async function confirm() {
-    if (!confirm('Confirm this plan? Servings will be deducted from your meal library.')) return
+  async function confirmPlan() {
+    if (!window.confirm('Confirm this plan? Servings will be deducted from your meal library.')) return
     setConfirming(true)
 
     const updated = deductServings(slots, meals)
@@ -128,6 +135,9 @@ export default function WeeklyPlan() {
   const purées = meals.filter(m => m.type === 'puree')
   const fingers = meals.filter(m => m.type === 'finger_food')
 
+  // Regenerate is disabled mid-week when a plan already exists
+  const regenDisabled = generating || meals.length === 0 || (midWeek && !!plan)
+
   if (loading) return <div className="spinner">Loading…</div>
 
   return (
@@ -141,17 +151,31 @@ export default function WeeklyPlan() {
             </span>
           )}
         </div>
-        <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-          <button className="btn btn-accent" onClick={generate} disabled={generating || meals.length === 0}>
-            {generating ? 'Generating…' : plan ? 'Regenerate' : 'Generate plan'}
-          </button>
-          {plan && plan.status === 'draft' && slots.length > 0 && (
-            <button className="btn btn-primary" onClick={confirm} disabled={confirming}>
-              {confirming ? 'Confirming…' : 'Confirm plan'}
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '0.375rem' }}>
+          <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+            <button className="btn btn-accent" onClick={generate} disabled={regenDisabled}>
+              {generating ? 'Generating…' : plan ? 'Regenerate' : 'Generate plan'}
             </button>
+            {plan && plan.status === 'draft' && slots.length > 0 && (
+              <button className="btn btn-primary" onClick={confirmPlan} disabled={confirming}>
+                {confirming ? 'Confirming…' : 'Confirm plan'}
+              </button>
+            )}
+          </div>
+          {midWeek && plan && (
+            <p style={{ fontFamily: '-apple-system, sans-serif', fontSize: '0.72rem', color: 'var(--ink-faint)', textAlign: 'right' }}>
+              Mid-week — edit meals directly instead
+            </p>
           )}
         </div>
       </div>
+
+      {/* Confirmed plan edit warning */}
+      {plan && plan.status === 'confirmed' && (
+        <div className="flag flag-warn" style={{ marginBottom: '1rem' }}>
+          Plan confirmed — you can still edit meals but servings won't auto-adjust. Update the meal library manually if needed.
+        </div>
+      )}
 
       {meals.length === 0 && (
         <div className="flag flag-warn" style={{ marginBottom: '1rem' }}>
@@ -171,15 +195,46 @@ export default function WeeklyPlan() {
       )}
 
       {!plan ? (
-        <div className="empty-state">No plan for this week yet. Hit "Generate plan" to get started.</div>
+        <div style={{ textAlign: 'center', padding: '3rem 1rem' }}>
+          <p style={{ fontFamily: '-apple-system, sans-serif', fontSize: '1rem', color: 'var(--ink)', marginBottom: '0.5rem', fontWeight: 500 }}>
+            This week's meal plan hasn't been set up yet
+          </p>
+          <p style={{ fontFamily: '-apple-system, sans-serif', fontSize: '0.85rem', color: 'var(--ink-muted)' }}>
+            Tap Generate plan above to get started
+          </p>
+        </div>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
           {DAYS.map((day, i) => {
             const isToday = day === todayName
+            const isPast = i < todayIndex
+            const canEdit = !isPast
+
             return (
-              <div key={day} className="card" style={{ padding: 0, overflow: 'hidden', outline: isToday ? '2px solid var(--accent)' : 'none' }}>
-                <div style={{ background: isToday ? 'var(--accent)' : 'var(--ink)', color: '#fff', padding: '0.45rem 1rem', fontFamily: '-apple-system, sans-serif', fontSize: '0.78rem', fontWeight: 600, letterSpacing: '0.05em' }}>
-                  {isToday && '▸ '}{dayLabel(mondayStr, i)}
+              <div
+                key={day}
+                className="card"
+                style={{
+                  padding: 0,
+                  overflow: 'hidden',
+                  outline: isToday ? '2px solid var(--accent)' : 'none',
+                  opacity: isPast ? 0.45 : 1
+                }}
+              >
+                <div style={{
+                  background: isToday ? 'var(--accent)' : 'var(--ink)',
+                  color: '#fff',
+                  padding: '0.45rem 1rem',
+                  fontFamily: '-apple-system, sans-serif',
+                  fontSize: '0.78rem',
+                  fontWeight: 600,
+                  letterSpacing: '0.05em',
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center'
+                }}>
+                  <span>{isToday && '▸ '}{dayLabel(mondayStr, i)}</span>
+                  {isPast && <span style={{ fontSize: '0.65rem', opacity: 0.7, fontWeight: 400 }}>past</span>}
                 </div>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr' }}>
                   {SLOTS.map((slot, si) => {
@@ -203,10 +258,10 @@ export default function WeeklyPlan() {
                             </select>
                           ) : (
                             <p
-                              style={{ fontFamily: '-apple-system, sans-serif', fontSize: '0.82rem', color: puree ? 'var(--ink)' : 'var(--ink-faint)', cursor: 'pointer', fontStyle: puree ? 'normal' : 'italic' }}
-                              onClick={() => plan.status !== 'confirmed' && setEditing({ day, slot, field: 'puree_meal_id' })}
+                              style={{ fontFamily: '-apple-system, sans-serif', fontSize: '0.82rem', color: puree ? 'var(--ink)' : 'var(--ink-faint)', cursor: canEdit ? 'pointer' : 'default', fontStyle: puree ? 'normal' : 'italic' }}
+                              onClick={() => canEdit && setEditing({ day, slot, field: 'puree_meal_id' })}
                             >
-                              {puree ? puree.name : 'Not set'}{plan.status !== 'confirmed' && ' ✎'}
+                              {puree ? puree.name : 'Not set'}{canEdit && ' ✎'}
                             </p>
                           )}
                         </div>
@@ -220,10 +275,10 @@ export default function WeeklyPlan() {
                             </select>
                           ) : (
                             <p
-                              style={{ fontFamily: '-apple-system, sans-serif', fontSize: '0.82rem', color: finger ? 'var(--ink)' : 'var(--ink-faint)', cursor: 'pointer', fontStyle: finger ? 'normal' : 'italic' }}
-                              onClick={() => plan.status !== 'confirmed' && setEditing({ day, slot, field: 'finger_food_meal_id' })}
+                              style={{ fontFamily: '-apple-system, sans-serif', fontSize: '0.82rem', color: finger ? 'var(--ink)' : 'var(--ink-faint)', cursor: canEdit ? 'pointer' : 'default', fontStyle: finger ? 'normal' : 'italic' }}
+                              onClick={() => canEdit && setEditing({ day, slot, field: 'finger_food_meal_id' })}
                             >
-                              {finger ? finger.name : 'Not set'}{plan.status !== 'confirmed' && ' ✎'}
+                              {finger ? finger.name : 'Not set'}{canEdit && ' ✎'}
                             </p>
                           )}
                         </div>
