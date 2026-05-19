@@ -25,6 +25,10 @@ function dayLabel(mondayStr, index) {
   return DAYS[index] + ' ' + ordinal(d.getDate()) + ' ' + d.toLocaleDateString('en-AU', { month: 'long' })
 }
 
+function getTodayName() {
+  return new Date().toLocaleDateString('en-AU', { weekday: 'long' })
+}
+
 export default function WeeklyPlan() {
   const [meals, setMeals] = useState([])
   const [plan, setPlan] = useState(null)
@@ -33,68 +37,67 @@ export default function WeeklyPlan() {
   const [loading, setLoading] = useState(true)
   const [generating, setGenerating] = useState(false)
   const [confirming, setConfirming] = useState(false)
-  const [editing, setEditing] = useState(null) // { day, slot, field }
+  const [editing, setEditing] = useState(null)
   const mondayStr = getMondayStr()
+  const todayName = getTodayName()
 
   useEffect(() => { init() }, [])
 
- async function init() {
-  setLoading(true)
-  const [{ data: mealData }, { data: planData }, { data: allSlotData }] = await Promise.all([
-    supabase.from('meals').select('*'),
-    supabase.from('weekly_plans').select('*').eq('week_starting', mondayStr).single(),
-    supabase.from('plan_slots').select('*')
-  ])
-  setMeals(mealData || [])
-  if (planData) {
-    setPlan(planData)
-    const s = (allSlotData || []).filter(s => s.plan_id === planData.id)
-    setSlots(s)
-    setFlags(validateSlots(s, mealData || []))
+  async function init() {
+    setLoading(true)
+    const [{ data: mealData }, { data: planData }, { data: allSlotData }] = await Promise.all([
+      supabase.from('meals').select('*'),
+      supabase.from('weekly_plans').select('*').eq('week_starting', mondayStr).single(),
+      supabase.from('plan_slots').select('*')
+    ])
+    setMeals(mealData || [])
+    if (planData) {
+      setPlan(planData)
+      const s = (allSlotData || []).filter(s => s.plan_id === planData.id)
+      setSlots(s)
+      setFlags(validateSlots(s, mealData || []))
+    }
+    setLoading(false)
   }
-  setLoading(false)
-}
 
   async function generate() {
     setGenerating(true)
     const { slots: newSlots, flags: newFlags } = generatePlan(meals)
 
-    // Upsert plan
     let planId = plan?.id
     if (!planId) {
       const { data } = await supabase.from('weekly_plans').insert({ week_starting: mondayStr, status: 'draft' }).select().single()
       planId = data.id
-      setPlan(data)
-} else {
-  await Promise.all([
-    supabase.from('weekly_plans').update({ status: 'draft' }).eq('id', planId),
-    supabase.from('plan_slots').delete().eq('plan_id', planId)
-  ])
-}
+    } else {
+      await Promise.all([
+        supabase.from('weekly_plans').update({ status: 'draft' }).eq('id', planId),
+        supabase.from('plan_slots').delete().eq('plan_id', planId)
+      ])
+    }
 
-const rows = newSlots.map(s => ({ ...s, plan_id: planId }))
-await supabase.from('plan_slots').insert(rows)
+    const rows = newSlots.map(s => ({ ...s, plan_id: planId }))
+    await supabase.from('plan_slots').insert(rows)
 
-setPlan({ id: planId, week_starting: mondayStr, status: 'draft' })
-setSlots(rows)
-setFlags([...newFlags, ...validateSlots(rows, meals)])
-setGenerating(false)
+    setPlan({ id: planId, week_starting: mondayStr, status: 'draft' })
+    setSlots(rows)
+    setFlags([...newFlags, ...validateSlots(rows, meals)])
+    setGenerating(false)
   }
 
-async function confirm() {
-  if (!confirm('Confirm this plan? Servings will be deducted from your meal library.')) return
-  setConfirming(true)
+  async function confirm() {
+    if (!confirm('Confirm this plan? Servings will be deducted from your meal library.')) return
+    setConfirming(true)
 
-  const updated = deductServings(slots, meals)
-  await Promise.all([
-    supabase.from('meals').upsert(updated),
-    supabase.from('weekly_plans').update({ status: 'confirmed' }).eq('id', plan.id)
-  ])
+    const updated = deductServings(slots, meals)
+    await Promise.all([
+      supabase.from('meals').upsert(updated),
+      supabase.from('weekly_plans').update({ status: 'confirmed' }).eq('id', plan.id)
+    ])
 
-  setPlan(p => ({ ...p, status: 'confirmed' }))
-  setMeals(updated)
-  setConfirming(false)
-}
+    setPlan(p => ({ ...p, status: 'confirmed' }))
+    setMeals(updated)
+    setConfirming(false)
+  }
 
   async function swapMeal(day, meal_slot, field, newMealId) {
     const updated = slots.map(s => {
@@ -105,7 +108,6 @@ async function confirm() {
     setFlags(validateSlots(updated, meals))
     setEditing(null)
 
-    const slot = updated.find(s => s.day === day && s.meal_slot === meal_slot)
     await supabase.from('plan_slots')
       .update({ [field]: newMealId })
       .eq('plan_id', plan.id).eq('day', day).eq('meal_slot', meal_slot)
@@ -172,69 +174,70 @@ async function confirm() {
         <div className="empty-state">No plan for this week yet. Hit "Generate plan" to get started.</div>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-          {DAYS.map((day, i) => (
-            <div key={day} className="card" style={{ padding: 0, overflow: 'hidden' }}>
-              <div style={{ background: 'var(--ink)', color: '#fff', padding: '0.45rem 1rem', fontFamily: '-apple-system, sans-serif', fontSize: '0.78rem', fontWeight: 600, letterSpacing: '0.05em' }}>
-                {dayLabel(mondayStr, i)}
-              </div>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr' }}>
-                {SLOTS.map((slot, si) => {
-                  const s = getSlot(day, slot)
-                  const puree = s ? getMeal(s.puree_meal_id) : null
-                  const finger = s ? getMeal(s.finger_food_meal_id) : null
-                  const slotFlags = getFlagsFor(day, slot)
-                  const isEditingPuree = editing?.day === day && editing?.slot === slot && editing?.field === 'puree_meal_id'
-                  const isEditingFinger = editing?.day === day && editing?.slot === slot && editing?.field === 'finger_food_meal_id'
+          {DAYS.map((day, i) => {
+            const isToday = day === todayName
+            return (
+              <div key={day} className="card" style={{ padding: 0, overflow: 'hidden', outline: isToday ? '2px solid var(--accent)' : 'none' }}>
+                <div style={{ background: isToday ? 'var(--accent)' : 'var(--ink)', color: '#fff', padding: '0.45rem 1rem', fontFamily: '-apple-system, sans-serif', fontSize: '0.78rem', fontWeight: 600, letterSpacing: '0.05em' }}>
+                  {isToday && '▸ '}{dayLabel(mondayStr, i)}
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr' }}>
+                  {SLOTS.map((slot, si) => {
+                    const s = getSlot(day, slot)
+                    const puree = s ? getMeal(s.puree_meal_id) : null
+                    const finger = s ? getMeal(s.finger_food_meal_id) : null
+                    const slotFlags = getFlagsFor(day, slot)
+                    const isEditingPuree = editing?.day === day && editing?.slot === slot && editing?.field === 'puree_meal_id'
+                    const isEditingFinger = editing?.day === day && editing?.slot === slot && editing?.field === 'finger_food_meal_id'
 
-                  return (
-                    <div key={slot} style={{ padding: '0.75rem 1rem', borderLeft: si === 1 ? '1px solid var(--border)' : 'none' }}>
-                      <p style={{ fontFamily: '-apple-system, sans-serif', fontSize: '0.68rem', fontWeight: 600, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--ink-faint)', marginBottom: '0.5rem' }}>{slot}</p>
+                    return (
+                      <div key={slot} style={{ padding: '0.75rem 1rem', borderLeft: si === 1 ? '1px solid var(--border)' : 'none' }}>
+                        <p style={{ fontFamily: '-apple-system, sans-serif', fontSize: '0.68rem', fontWeight: 600, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--ink-faint)', marginBottom: '0.5rem' }}>{slot}</p>
 
-                      {/* Puree */}
-                      <div style={{ marginBottom: '0.5rem' }}>
-                        <span className="pill pill-puree" style={{ marginBottom: '0.3rem', display: 'inline-block' }}>Puree</span>
-                        {isEditingPuree ? (
-                          <select autoFocus style={{ marginTop: '0.25rem' }} value={s?.puree_meal_id || ''} onChange={e => swapMeal(day, slot, 'puree_meal_id', e.target.value || null)} onBlur={() => setEditing(null)}>
-                            <option value="">— none —</option>
-                            {purées.map(m => <option key={m.id} value={m.id}>{m.name} ({m.servings_available} left)</option>)}
-                          </select>
-                        ) : (
-                          <p
-                            style={{ fontFamily: '-apple-system, sans-serif', fontSize: '0.82rem', color: puree ? 'var(--ink)' : 'var(--ink-faint)', cursor: 'pointer', fontStyle: puree ? 'normal' : 'italic' }}
-                            onClick={() => plan.status !== 'confirmed' && setEditing({ day, slot, field: 'puree_meal_id' })}
-                          >
-                            {puree ? puree.name : 'Not set'}{plan.status !== 'confirmed' && ' ✎'}
-                          </p>
-                        )}
+                        <div style={{ marginBottom: '0.5rem' }}>
+                          <span className="pill pill-puree" style={{ marginBottom: '0.3rem', display: 'inline-block' }}>Puree</span>
+                          {isEditingPuree ? (
+                            <select autoFocus style={{ marginTop: '0.25rem' }} value={s?.puree_meal_id || ''} onChange={e => swapMeal(day, slot, 'puree_meal_id', e.target.value || null)} onBlur={() => setEditing(null)}>
+                              <option value="">— none —</option>
+                              {purées.map(m => <option key={m.id} value={m.id}>{m.name} ({m.servings_available} left)</option>)}
+                            </select>
+                          ) : (
+                            <p
+                              style={{ fontFamily: '-apple-system, sans-serif', fontSize: '0.82rem', color: puree ? 'var(--ink)' : 'var(--ink-faint)', cursor: 'pointer', fontStyle: puree ? 'normal' : 'italic' }}
+                              onClick={() => plan.status !== 'confirmed' && setEditing({ day, slot, field: 'puree_meal_id' })}
+                            >
+                              {puree ? puree.name : 'Not set'}{plan.status !== 'confirmed' && ' ✎'}
+                            </p>
+                          )}
+                        </div>
+
+                        <div>
+                          <span className="pill pill-finger" style={{ marginBottom: '0.3rem', display: 'inline-block' }}>Finger food</span>
+                          {isEditingFinger ? (
+                            <select autoFocus style={{ marginTop: '0.25rem' }} value={s?.finger_food_meal_id || ''} onChange={e => swapMeal(day, slot, 'finger_food_meal_id', e.target.value || null)} onBlur={() => setEditing(null)}>
+                              <option value="">— none —</option>
+                              {fingers.map(m => <option key={m.id} value={m.id}>{m.name} ({m.servings_available} left)</option>)}
+                            </select>
+                          ) : (
+                            <p
+                              style={{ fontFamily: '-apple-system, sans-serif', fontSize: '0.82rem', color: finger ? 'var(--ink)' : 'var(--ink-faint)', cursor: 'pointer', fontStyle: finger ? 'normal' : 'italic' }}
+                              onClick={() => plan.status !== 'confirmed' && setEditing({ day, slot, field: 'finger_food_meal_id' })}
+                            >
+                              {finger ? finger.name : 'Not set'}{plan.status !== 'confirmed' && ' ✎'}
+                            </p>
+                          )}
+                        </div>
+
+                        {slotFlags.filter(f => f.msg).map((f, fi) => (
+                          <div key={fi} className="flag flag-warn" style={{ marginTop: '0.5rem', fontSize: '0.72rem', padding: '0.35rem 0.6rem' }}>⚠ {f.msg}</div>
+                        ))}
                       </div>
-
-                      {/* Finger food */}
-                      <div>
-                        <span className="pill pill-finger" style={{ marginBottom: '0.3rem', display: 'inline-block' }}>Finger food</span>
-                        {isEditingFinger ? (
-                          <select autoFocus style={{ marginTop: '0.25rem' }} value={s?.finger_food_meal_id || ''} onChange={e => swapMeal(day, slot, 'finger_food_meal_id', e.target.value || null)} onBlur={() => setEditing(null)}>
-                            <option value="">— none —</option>
-                            {fingers.map(m => <option key={m.id} value={m.id}>{m.name} ({m.servings_available} left)</option>)}
-                          </select>
-                        ) : (
-                          <p
-                            style={{ fontFamily: '-apple-system, sans-serif', fontSize: '0.82rem', color: finger ? 'var(--ink)' : 'var(--ink-faint)', cursor: 'pointer', fontStyle: finger ? 'normal' : 'italic' }}
-                            onClick={() => plan.status !== 'confirmed' && setEditing({ day, slot, field: 'finger_food_meal_id' })}
-                          >
-                            {finger ? finger.name : 'Not set'}{plan.status !== 'confirmed' && ' ✎'}
-                          </p>
-                        )}
-                      </div>
-
-                      {slotFlags.filter(f => f.msg).map((f, fi) => (
-                        <div key={fi} className="flag flag-warn" style={{ marginTop: '0.5rem', fontSize: '0.72rem', padding: '0.35rem 0.6rem' }}>⚠ {f.msg}</div>
-                      ))}
-                    </div>
-                  )
-                })}
+                    )
+                  })}
+                </div>
               </div>
-            </div>
-          ))}
+            )
+          })}
         </div>
       )}
     </div>

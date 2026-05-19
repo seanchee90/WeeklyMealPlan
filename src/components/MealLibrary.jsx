@@ -21,37 +21,40 @@ export default function MealLibrary() {
     setLoading(false)
   }
 
-async function save() {
-  if (!form.name.trim()) return
-  setSaving(true)
-  setError(null)
-  if (editId) {
-    const { error } = await supabase.from('meals').update(form).eq('id', editId)
-    if (error) { setError(error.message); setSaving(false); return }
-    setMeals(ms => ms.map(m => m.id === editId ? { ...m, ...form } : m))
-  } else {
-    const { data, error } = await supabase.from('meals').insert(form).select().single()
-    if (error) { setError(error.message); setSaving(false); return }
-    setMeals(ms => [...ms, data].sort((a, b) => a.type.localeCompare(b.type) || a.name.localeCompare(b.name)))
+  // FIX 4: update local state directly, no refetch
+  async function save() {
+    if (!form.name.trim()) return
+    setSaving(true)
+    setError(null)
+    if (editId) {
+      const { error } = await supabase.from('meals').update(form).eq('id', editId)
+      if (error) { setError(error.message); setSaving(false); return }
+      setMeals(ms => ms.map(m => m.id === editId ? { ...m, ...form } : m))
+    } else {
+      const { data, error } = await supabase.from('meals').insert(form).select().single()
+      if (error) { setError(error.message); setSaving(false); return }
+      setMeals(ms => [...ms, data].sort((a, b) => a.type.localeCompare(b.type) || a.name.localeCompare(b.name)))
+    }
+    setSaving(false)
+    setForm(EMPTY)
+    setEditId(null)
+    setShowForm(false)
   }
-  setSaving(false)
-  setForm(EMPTY)
-  setEditId(null)
-  setShowForm(false)
-}
 
-async function updateServings(id, delta) {
-  const meal = meals.find(m => m.id === id)
-  const next = Math.max(0, meal.servings_available + delta)
-  setMeals(ms => ms.map(m => m.id === id ? { ...m, servings_available: next } : m))
-  await supabase.from('meals').update({ servings_available: next }).eq('id', id)
-}
+  // FIX 5: update local state directly, no refetch
+  async function updateServings(id, delta) {
+    const meal = meals.find(m => m.id === id)
+    const next = Math.max(0, meal.servings_available + delta)
+    setMeals(ms => ms.map(m => m.id === id ? { ...m, servings_available: next } : m))
+    await supabase.from('meals').update({ servings_available: next }).eq('id', id)
+  }
 
-async function deleteMeal(id) {
-  if (!confirm('Delete this meal?')) return
-  setMeals(ms => ms.filter(m => m.id !== id))
-  await supabase.from('meals').delete().eq('id', id)
-}
+  // FIX 6: update local state directly, no refetch
+  async function deleteMeal(id) {
+    if (!confirm('Delete this meal?')) return
+    setMeals(ms => ms.filter(m => m.id !== id))
+    await supabase.from('meals').delete().eq('id', id)
+  }
 
   function startEdit(meal) {
     setForm({ name: meal.name, type: meal.type, has_protein: meal.has_protein, has_veggie: meal.has_veggie, servings_available: meal.servings_available })
@@ -129,25 +132,27 @@ async function deleteMeal(id) {
                 {list.length === 0 ? (
                   <div className="card" style={{ color: 'var(--ink-faint)', fontFamily: 'sans-serif', fontSize: '0.85rem' }}>None added yet</div>
                 ) : list.map(meal => (
-                  <div key={meal.id} className="card" style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+                  <div key={meal.id} className="card" style={{ padding: 0, overflow: 'hidden' }}>
+                    <div style={{ padding: '0.75rem 1rem 0.625rem' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '0.5rem', marginBottom: '0.5rem' }}>
                         <span style={{ fontFamily: '-apple-system, sans-serif', fontSize: '0.9rem', fontWeight: 500 }}>{meal.name}</span>
+                        <div style={{ display: 'flex', gap: '0.375rem', flexShrink: 0 }}>
+                          <button className="btn btn-sm" onClick={() => startEdit(meal)}>Edit</button>
+                          <button className="btn btn-sm btn-danger" onClick={() => deleteMeal(meal.id)}>Delete</button>
+                        </div>
+                      </div>
+                      <div style={{ display: 'flex', gap: '0.375rem', flexWrap: 'wrap' }}>
                         {meal.has_protein && <span className="pill pill-ok">protein</span>}
                         {meal.has_veggie && <span className="pill pill-ok">veggie</span>}
-                        {!meal.has_protein && <span className="pill pill-warn">no protein</span>}
-                        {!meal.has_veggie && <span className="pill pill-warn">no veggie</span>}
                       </div>
                     </div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.375rem', flexShrink: 0 }}>
-                      <button className="btn btn-sm" style={{ padding: '0.3rem 0.6rem', lineHeight: 1 }} onClick={() => updateServings(meal.id, -1)}>−</button>
-                      <span style={{ fontFamily: '-apple-system, sans-serif', fontSize: '0.85rem', fontWeight: 600, minWidth: '2rem', textAlign: 'center' }}>{meal.servings_available}</span>
-                      <button className="btn btn-sm" style={{ padding: '0.3rem 0.6rem', lineHeight: 1 }} onClick={() => updateServings(meal.id, 1)}>+</button>
-                      <span style={{ fontFamily: '-apple-system, sans-serif', fontSize: '0.72rem', color: 'var(--ink-faint)', marginLeft: '0.125rem' }}>serves</span>
-                    </div>
-                    <div style={{ display: 'flex', gap: '0.375rem', flexShrink: 0 }}>
-                      <button className="btn btn-sm" onClick={() => startEdit(meal)}>Edit</button>
-                      <button className="btn btn-sm btn-danger" onClick={() => deleteMeal(meal.id)}>Delete</button>
+                    <div style={{ borderTop: '1px solid var(--border)', padding: '0.5rem 1rem', display: 'flex', alignItems: 'center', gap: '0.5rem', background: 'var(--cream)' }}>
+                      <span style={{ fontFamily: '-apple-system, sans-serif', fontSize: '0.75rem', color: 'var(--ink-muted)' }}>Servings</span>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginLeft: 'auto' }}>
+                        <button className="btn btn-sm" style={{ padding: '0.3rem 0.6rem', lineHeight: 1 }} onClick={() => updateServings(meal.id, -1)}>−</button>
+                        <span style={{ fontFamily: '-apple-system, sans-serif', fontSize: '0.9rem', fontWeight: 600, minWidth: '1.5rem', textAlign: 'center' }}>{meal.servings_available}</span>
+                        <button className="btn btn-sm" style={{ padding: '0.3rem 0.6rem', lineHeight: 1 }} onClick={() => updateServings(meal.id, 1)}>+</button>
+                      </div>
                     </div>
                   </div>
                 ))}
