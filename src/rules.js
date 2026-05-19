@@ -11,10 +11,10 @@ export function generatePlan(meals) {
 
   const slots = []
   const flags = []
-  // Track last two combos to avoid repeating on consecutive slots (including across day boundaries)
-  const recentCombos = []
 
-  for (const day of DAYS) {
+  for (let dayIndex = 0; dayIndex < DAYS.length; dayIndex++) {
+    const day = DAYS[dayIndex]
+
     for (const slot of SLOTS) {
       const availPurées = purées.filter(m => servings[m.id] > 0)
       const availFingers = fingers.filter(m => servings[m.id] > 0)
@@ -30,23 +30,43 @@ export function generatePlan(meals) {
         continue
       }
 
-      // Find a combo not used in the last two slots
-      const isRecentCombo = (p, f) => recentCombos.some(c => c.pureeId === p.id && c.fingerId === f.id)
-      let puree = availPurées[0]
-      let finger = availFingers[0]
+      // Collect puree and finger food IDs used today and yesterday
+      const recentSlots = slots.filter(s => {
+        const sDay = DAYS.indexOf(s.day)
+        return sDay === dayIndex || sDay === dayIndex - 1
+      })
+      const recentPureeIds = new Set(recentSlots.map(s => s.puree_meal_id).filter(Boolean))
+      const recentFingerIds = new Set(recentSlots.map(s => s.finger_food_meal_id).filter(Boolean))
+
+      // Also track last 2 combos for combo-repeat rule
+      const lastTwo = slots.slice(-2)
+      const isRecentCombo = (p, f) => lastTwo.some(s => s.puree_meal_id === p.id && s.finger_food_meal_id === f.id)
+
+      // Preferred: puree not used today/yesterday, finger not used today/yesterday, combo not repeated
+      // Fall back progressively if not enough variety
+      const preferredPurées = availPurées.filter(m => !recentPureeIds.has(m.id))
+      const preferredFingers = availFingers.filter(m => !recentFingerIds.has(m.id))
+
+      let puree = null
+      let finger = null
       let found = false
-      for (const p of availPurées) {
-        for (const f of availFingers) {
+
+      // Try preferred pools first
+      for (const p of (preferredPurées.length ? preferredPurées : availPurées)) {
+        for (const f of (preferredFingers.length ? preferredFingers : availFingers)) {
           if (!isRecentCombo(p, f)) { puree = p; finger = f; found = true; break }
         }
         if (found) break
       }
 
-      // Track recent combos (keep last 2)
-      recentCombos.push({ pureeId: puree.id, fingerId: finger.id })
-      if (recentCombos.length > 2) recentCombos.shift()
+      // Fallback 1: relax combo rule, keep meal freshness
+      if (!found) {
+        puree = preferredPurées[0] || availPurées[0]
+        finger = preferredFingers[0] || availFingers[0]
+        found = true
+      }
 
-      // Nutrition rule: slot must have at least one meal with protein and one with veggie (can be same meal)
+      // Nutrition rule: slot must have protein and veggie covered across both meals
       const slotHasProtein = puree.has_protein || finger.has_protein
       const slotHasVeggie = puree.has_veggie || finger.has_veggie
       if (!slotHasProtein)
@@ -70,19 +90,33 @@ export function validateSlots(slots, meals) {
 
   for (let i = 0; i < slots.length; i++) {
     const s = slots[i]
+    const dayIndex = DAYS.indexOf(s.day)
     const puree = mealMap[s.puree_meal_id]
     const finger = mealMap[s.finger_food_meal_id]
 
     if (!puree) { flags.push({ day: s.day, slot: s.meal_slot, msg: 'Missing puree' }); continue }
     if (!finger) { flags.push({ day: s.day, slot: s.meal_slot, msg: 'Missing finger food' }); continue }
 
-    // Nutrition: slot needs protein covered and veggie covered across both meals
+    // Nutrition: slot needs protein and veggie covered across both meals
     const slotHasProtein = puree.has_protein || finger.has_protein
     const slotHasVeggie = puree.has_veggie || finger.has_veggie
     if (!slotHasProtein)
       flags.push({ day: s.day, slot: s.meal_slot, msg: 'No protein in this slot — at least one meal must have protein' })
     if (!slotHasVeggie)
       flags.push({ day: s.day, slot: s.meal_slot, msg: 'No veggie in this slot — at least one meal must have veggie' })
+
+    // Check if same puree or finger food used today or yesterday
+    const recentSlots = slots.filter((rs, ri) => {
+      const rDay = DAYS.indexOf(rs.day)
+      return ri !== i && (rDay === dayIndex || rDay === dayIndex - 1)
+    })
+    const recentPureeIds = new Set(recentSlots.map(s => s.puree_meal_id))
+    const recentFingerIds = new Set(recentSlots.map(s => s.finger_food_meal_id))
+
+    if (recentPureeIds.has(s.puree_meal_id))
+      flags.push({ day: s.day, slot: s.meal_slot, msg: `${puree.name} was already used today or yesterday` })
+    if (recentFingerIds.has(s.finger_food_meal_id))
+      flags.push({ day: s.day, slot: s.meal_slot, msg: `${finger.name} was already used today or yesterday` })
 
     // Combo repeat: check against last two slots
     const prev1 = slots[i - 1]
