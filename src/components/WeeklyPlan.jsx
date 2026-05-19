@@ -153,7 +153,7 @@ export default function WeeklyPlan() {
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '0.375rem' }}>
           <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-            <button className="btn btn-accent" onClick={generate} disabled={regenDisabled}>
+            <button className={regenDisabled ? 'btn' : 'btn btn-accent'} onClick={generate} disabled={regenDisabled}>
               {generating ? 'Generating…' : plan ? 'Regenerate' : 'Generate plan'}
             </button>
             {plan && plan.status === 'draft' && slots.length > 0 && (
