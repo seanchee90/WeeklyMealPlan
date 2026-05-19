@@ -38,22 +38,22 @@ export default function WeeklyPlan() {
 
   useEffect(() => { init() }, [])
 
-  async function init() {
-    setLoading(true)
-    const [{ data: mealData }, { data: planData }] = await Promise.all([
-      supabase.from('meals').select('*'),
-      supabase.from('weekly_plans').select('*').eq('week_starting', mondayStr).single()
-    ])
-    setMeals(mealData || [])
-    if (planData) {
-      setPlan(planData)
-      const { data: slotData } = await supabase.from('plan_slots').select('*').eq('plan_id', planData.id)
-      const s = slotData || []
-      setSlots(s)
-      setFlags(validateSlots(s, mealData || []))
-    }
-    setLoading(false)
+ async function init() {
+  setLoading(true)
+  const [{ data: mealData }, { data: planData }, { data: allSlotData }] = await Promise.all([
+    supabase.from('meals').select('*'),
+    supabase.from('weekly_plans').select('*').eq('week_starting', mondayStr).single(),
+    supabase.from('plan_slots').select('*')
+  ])
+  setMeals(mealData || [])
+  if (planData) {
+    setPlan(planData)
+    const s = (allSlotData || []).filter(s => s.plan_id === planData.id)
+    setSlots(s)
+    setFlags(validateSlots(s, mealData || []))
   }
+  setLoading(false)
+}
 
   async function generate() {
     setGenerating(true)
@@ -65,36 +65,36 @@ export default function WeeklyPlan() {
       const { data } = await supabase.from('weekly_plans').insert({ week_starting: mondayStr, status: 'draft' }).select().single()
       planId = data.id
       setPlan(data)
-    } else {
-      await supabase.from('weekly_plans').update({ status: 'draft' }).eq('id', planId)
-      await supabase.from('plan_slots').delete().eq('plan_id', planId)
-    }
+} else {
+  await Promise.all([
+    supabase.from('weekly_plans').update({ status: 'draft' }).eq('id', planId),
+    supabase.from('plan_slots').delete().eq('plan_id', planId)
+  ])
+}
 
-    const rows = newSlots.map(s => ({ ...s, plan_id: planId }))
-    await supabase.from('plan_slots').insert(rows)
+const rows = newSlots.map(s => ({ ...s, plan_id: planId }))
+await supabase.from('plan_slots').insert(rows)
 
-    const { data: fresh } = await supabase.from('weekly_plans').select('*').eq('id', planId).single()
-    setPlan(fresh)
-    setSlots(rows)
-    setFlags([...newFlags, ...validateSlots(rows, meals)])
-    setGenerating(false)
+setPlan({ id: planId, week_starting: mondayStr, status: 'draft' })
+setSlots(rows)
+setFlags([...newFlags, ...validateSlots(rows, meals)])
+setGenerating(false)
   }
 
-  async function confirm() {
-    if (!confirm('Confirm this plan? Servings will be deducted from your meal library.')) return
-    setConfirming(true)
+async function confirm() {
+  if (!confirm('Confirm this plan? Servings will be deducted from your meal library.')) return
+  setConfirming(true)
 
-    const updated = deductServings(slots, meals)
-    for (const m of updated) {
-      await supabase.from('meals').update({ servings_available: m.servings_available }).eq('id', m.id)
-    }
-    await supabase.from('weekly_plans').update({ status: 'confirmed' }).eq('id', plan.id)
+  const updated = deductServings(slots, meals)
+  await Promise.all([
+    supabase.from('meals').upsert(updated),
+    supabase.from('weekly_plans').update({ status: 'confirmed' }).eq('id', plan.id)
+  ])
 
-    const { data: fresh } = await supabase.from('weekly_plans').select('*').eq('id', plan.id).single()
-    setPlan(fresh)
-    setMeals(updated)
-    setConfirming(false)
-  }
+  setPlan(p => ({ ...p, status: 'confirmed' }))
+  setMeals(updated)
+  setConfirming(false)
+}
 
   async function swapMeal(day, meal_slot, field, newMealId) {
     const updated = slots.map(s => {
